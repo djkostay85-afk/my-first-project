@@ -3,6 +3,22 @@ import {readFile} from 'node:fs/promises';
 import {randomUUID,createHmac,timingSafeEqual} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
+import https from 'node:https';
+import {rootCertificates} from 'node:tls';
+
+// Дополнительное доверие применяется только к API MAX, не ко всему серверу.
+export function createMaxFetch(caPem=''){
+  const agent=new https.Agent({ca:[...rootCertificates,...(caPem?[caPem]:[])]});
+  return (url,options={})=>new Promise((resolve,reject)=>{
+    const target=new URL(url);
+    if(target.origin!=='https://platform-api2.max.ru')return reject(Error('Unexpected API host'));
+    const request=https.request(target,{method:options.method||'GET',headers:options.headers,signal:options.signal,agent},response=>{
+      const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('error',reject);
+      response.on('end',()=>resolve({ok:response.statusCode>=200&&response.statusCode<300,status:response.statusCode,json:async()=>JSON.parse(Buffer.concat(chunks).toString('utf8'))}));
+    });
+    request.on('error',reject);if(options.body)request.write(options.body);request.end();
+  });
+}
 
 export function validateBrief(data){
   if(!data || typeof data!=='object' || Array.isArray(data)) throw Error('Некорректный бриф');
@@ -72,12 +88,13 @@ export function createApp({token='',chatId='',origin='',pairCode='',onBind=id=>c
 }
 if(typeof process!=='undefined'&&process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const token=process.env.MAX_BOT_TOKEN||'',origin=process.env.SITE_ORIGIN||'',pairCode=process.env.MAX_PAIR_CODE||'';
-  const app=createApp({token,chatId:process.env.MAX_CHAT_ID,origin,pairCode});
+  const maxFetch=createMaxFetch(process.env.MAX_CA_PEM||'');
+  const app=createApp({token,chatId:process.env.MAX_CHAT_ID,origin,pairCode,fetchImpl:maxFetch});
   http.createServer(app).listen(Number(process.env.PORT)||3000,'0.0.0.0',async()=>{
     console.log('ОКО: веб-сервер запущен');
     if(token&&origin&&pairCode&&!process.env.MAX_CHAT_ID){
       try{
-        const response=await fetch('https://platform-api2.max.ru/subscriptions',{method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({url:origin+'/max/webhook',update_types:['message_created'],secret:webhookSecret(token)}),signal:AbortSignal.timeout(15000)});
+        const response=await maxFetch('https://platform-api2.max.ru/subscriptions',{method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({url:origin+'/max/webhook',update_types:['message_created'],secret:webhookSecret(token)}),signal:AbortSignal.timeout(15000)});
         const result=await response.json().catch(()=>null);
         console.log(response.ok&&result?.success===true?'OKO_WEBHOOK_READY':'OKO_WEBHOOK_FAILED HTTP '+response.status);
       }catch(error){console.log('OKO_WEBHOOK_FAILED NETWORK '+String(error?.cause?.code||error?.code||error?.name||'UNKNOWN'));}
