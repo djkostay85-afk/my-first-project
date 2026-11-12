@@ -1,6 +1,6 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHmac,timingSafeEqual} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 
@@ -18,12 +18,28 @@ export function validateBrief(data){
 }
 export function formatBrief(b,id){return ['Новый бриф ОКО · '+id,'Имя: '+b.name,'Контакт: '+b.contact,'Услуга: '+b.service,'','Задача:',b.task,'','Срок: '+(b.due||'уточнить'),'Бюджет: '+(b.budget||'уточнить')].join('\n');}
 
-export function createApp({token='',chatId='',origin='',fetchImpl=fetch,indexUrl=new URL('./index.html',import.meta.url)}={}){
+export function webhookSecret(token){return createHmac('sha256',token).update('oko-max-webhook-v1').digest('hex');}
+export function createApp({token='',chatId='',origin='',pairCode='',onBind=id=>console.log('OKO_CHAT_BOUND '+id),fetchImpl=fetch,indexUrl=new URL('./index.html',import.meta.url)}={}){
   const rates=new Map();let sending=false;let lastSent=0;
+  let bound=false;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));};
   return async(req,res)=>{
     try{
       const path=new URL(req.url,'http://localhost').pathname;
+      if(req.method==='POST'&&path==='/max/webhook'){
+        if(!token)return json(res,503,{error:'Unavailable'});
+        const received=Buffer.from(req.headers['x-max-bot-api-secret']||''),expected=Buffer.from(webhookSecret(token));
+        if(received.length!==expected.length||!timingSafeEqual(received,expected))return json(res,403,{error:'Forbidden'});
+        let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>100000)return json(res,413,{error:'Too large'});}
+        let event;try{event=JSON.parse(raw);}catch{return json(res,400,{error:'Invalid JSON'});}
+        const message=event.message,recipient=message?.recipient;
+        const text=message?.body?.text?.trim()||'';
+        const command=new RegExp('^/oko_bind(?:@se14988215_bot)?\\s+'+pairCode+'$');
+        if(pairCode&&!chatId&&!bound&&event.update_type==='message_created'&&recipient?.chat_type==='chat'&&!message?.sender?.is_bot&&command.test(text)&&Number.isSafeInteger(recipient.chat_id)){
+          bound=true;onBind(String(recipient.chat_id));
+        }
+        return json(res,200,{ok:true});
+      }
       if(req.method==='GET'&&path==='/healthz')return json(res,200,{ok:true});
       if(req.method==='GET'&&path==='/api/status')return json(res,200,{ready:Boolean(token&&/^-?\d+$/.test(chatId))});
       if(req.method==='GET'&&(path==='/'||path==='/index.html')){
@@ -55,6 +71,16 @@ export function createApp({token='',chatId='',origin='',fetchImpl=fetch,indexUrl
   };
 }
 if(typeof process!=='undefined'&&process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
-  const app=createApp({token:process.env.MAX_BOT_TOKEN,chatId:process.env.MAX_CHAT_ID,origin:process.env.SITE_ORIGIN});
-  http.createServer(app).listen(Number(process.env.PORT)||3000,'0.0.0.0',()=>console.log('ОКО: веб-сервер запущен'));
+  const token=process.env.MAX_BOT_TOKEN||'',origin=process.env.SITE_ORIGIN||'',pairCode=process.env.MAX_PAIR_CODE||'';
+  const app=createApp({token,chatId:process.env.MAX_CHAT_ID,origin,pairCode});
+  http.createServer(app).listen(Number(process.env.PORT)||3000,'0.0.0.0',async()=>{
+    console.log('ОКО: веб-сервер запущен');
+    if(token&&origin&&pairCode&&!process.env.MAX_CHAT_ID){
+      try{
+        const response=await fetch('https://platform-api2.max.ru/subscriptions',{method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({url:origin+'/max/webhook',update_types:['message_created'],secret:webhookSecret(token)}),signal:AbortSignal.timeout(15000)});
+        const result=await response.json().catch(()=>null);
+        console.log(response.ok&&result?.success===true?'OKO_WEBHOOK_READY':'OKO_WEBHOOK_FAILED HTTP '+response.status);
+      }catch{console.log('OKO_WEBHOOK_FAILED NETWORK');}
+    }
+  });
 }
