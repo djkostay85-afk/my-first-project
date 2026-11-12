@@ -1,0 +1,60 @@
+import http from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {resolve} from 'node:path';
+
+export function validateBrief(data){
+  if(!data || typeof data!=='object' || Array.isArray(data)) throw Error('Некорректный бриф');
+  const limits={name:120,contact:200,service:120,task:2500,due:30,budget:120};
+  const result={};
+  for(const [key,max] of Object.entries(limits)){
+    if(data[key]!==undefined && typeof data[key]!=='string')throw Error('Проверьте поля брифа');
+    result[key]=(data[key]||'').trim();
+    if(result[key].length>max)throw Error('Слишком длинное поле: '+key);
+  }
+  if(!result.name||!result.contact||!result.task)throw Error('Заполните имя, контакт и задачу');
+  return result;
+}
+export function formatBrief(b,id){return ['Новый бриф ОКО · '+id,'Имя: '+b.name,'Контакт: '+b.contact,'Услуга: '+b.service,'','Задача:',b.task,'','Срок: '+(b.due||'уточнить'),'Бюджет: '+(b.budget||'уточнить')].join('\n');}
+
+export function createApp({token='',chatId='',origin='',fetchImpl=fetch,indexUrl=new URL('./index.html',import.meta.url)}={}){
+  const rates=new Map();let sending=false;let lastSent=0;
+  const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));};
+  return async(req,res)=>{
+    try{
+      const path=new URL(req.url,'http://localhost').pathname;
+      if(req.method==='GET'&&path==='/healthz')return json(res,200,{ok:true});
+      if(req.method==='GET'&&path==='/api/status')return json(res,200,{ready:Boolean(token&&/^-?\d+$/.test(chatId))});
+      if(req.method==='GET'&&(path==='/'||path==='/index.html')){
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin','Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});
+        return res.end(await readFile(indexUrl));
+      }
+      if(path!=='/api/brief'||req.method!=='POST')return json(res,404,{error:'Не найдено'});
+      if(!origin||req.headers.origin!==origin)return json(res,403,{error:'Отправка доступна только с сайта ОКО'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Некорректный формат'});
+      if(!token||! /^-?\d+$/.test(chatId))return json(res,503,{error:'Приём заявок ещё не подключён. Сохраните бриф и свяжитесь с ОКО через MAX.'});
+      const ip=req.socket.remoteAddress||'unknown',now=Date.now();
+      for(const [key,value]of rates)if(now-value.start>600000)rates.delete(key);
+      const rate=rates.get(ip)||{start:now,count:0};rate.count++;rates.set(ip,rate);
+      if(rate.count>10)return json(res,429,{error:'Слишком много попыток. Попробуйте через 10 минут.'});
+      let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>16000)return json(res,413,{error:'Бриф слишком большой'});}
+      let b;try{b=validateBrief(JSON.parse(raw));}catch(e){return json(res,400,{error:e.message});}
+      if(sending||now-lastSent<600)return json(res,429,{error:'Принимаем предыдущую заявку. Повторите через несколько секунд.'});
+      const id=randomUUID().slice(0,8),text=formatBrief(b,id);
+      if(text.length>4000)return json(res,400,{error:'Сократите описание задачи'});
+      sending=true;lastSent=now;
+      try{
+        const response=await fetchImpl('https://platform-api2.max.ru/messages?chat_id='+encodeURIComponent(chatId),{method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({text,notify:true}),signal:AbortSignal.timeout(12000)});
+        const result=await response.json().catch(()=>null);
+        if(!response.ok||!result?.message?.body?.mid)return json(res,502,{error:'MAX не подтвердил доставку. Сохраните бриф и свяжитесь с ОКО через MAX.'});
+        return json(res,200,{ok:true,id});
+      }catch{return json(res,502,{error:'Доставка не подтверждена. Бриф сохранён на экране; перед повтором уточните у ОКО, получена ли заявка.'});}
+      finally{sending=false;}
+    }catch{if(!res.headersSent)json(res,500,{error:'Не удалось обработать запрос'});else res.end();}
+  };
+}
+if(typeof process!=='undefined'&&process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+  const app=createApp({token:process.env.MAX_BOT_TOKEN,chatId:process.env.MAX_CHAT_ID,origin:process.env.SITE_ORIGIN});
+  http.createServer(app).listen(Number(process.env.PORT)||3000,'0.0.0.0',()=>console.log('ОКО: веб-сервер запущен'));
+}
