@@ -80,7 +80,7 @@ if(typeof process!=='undefined'&&process.argv[1]&&resolve(process.argv[1])===fil
         const response=await fetch('https://platform-api2.max.ru/subscriptions',{method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({url:origin+'/max/webhook',update_types:['message_created'],secret:webhookSecret(token)}),signal:AbortSignal.timeout(15000)});
         const result=await response.json().catch(()=>null);
         console.log(response.ok&&result?.success===true?'OKO_WEBHOOK_READY':'OKO_WEBHOOK_FAILED HTTP '+response.status);
-      }catch{console.log('OKO_WEBHOOK_FAILED NETWORK');}
+      }catch(error){console.log('OKO_WEBHOOK_FAILED NETWORK '+String(error?.cause?.code||error?.code||error?.name||'UNKNOWN'));}
     }
   });
 }
