@@ -58,12 +58,12 @@ dialog h2{font-size:30px}
 (()=>{'use strict';const form=document.getElementById('briefForm'),service=document.getElementById('service'),request=document.getElementById('request'),status=document.getElementById('status');document.querySelectorAll('[data-service]').forEach(a=>a.addEventListener('click',()=>{service.value=a.dataset.service;}));form.addEventListener('submit',e=>{e.preventDefault();const d=new FormData(form);request.value=['БРИФ ДЛЯ ОКО','Имя: '+d.get('name'),'Контакт: '+d.get('contact'),'Услуга: '+d.get('service'),'','Задача:',d.get('task'),'','Желаемый срок: '+(d.get('due')||'уточнить'),'Бюджет: '+(d.get('budget')||'уточнить')].join('\n');document.getElementById('result').hidden=false;status.textContent='Бриф подготовлен. Проверьте данные и нажмите «Отправить бриф в ОКО».';document.getElementById('result').scrollIntoView({block:'center'});});
 let delivered=false;
 const sendServer=document.getElementById('sendServer');
-fetch('/api/status').then(r=>r.json()).then(x=>{sendServer.disabled=!x.ready;if(!x.ready)sendServer.textContent='Отправка пока не подключена';}).catch(()=>{sendServer.textContent='Отправка недоступна';});
+fetch('https://oko-creative-bureau.onrender.com/api/status').then(r=>r.json()).then(x=>{sendServer.disabled=!x.ready;if(!x.ready)sendServer.textContent='Отправка пока не подключена';}).catch(()=>{sendServer.textContent='Отправка недоступна';});
 form.addEventListener('input',()=>{document.getElementById('result').hidden=true;delivered=false;});
 sendServer.addEventListener('click',async()=>{
  if(delivered||!form.reportValidity())return;
  sendServer.disabled=true;sendServer.textContent='Отправляем…';status.textContent='Дождитесь подтверждения доставки.';
- try{const data=Object.fromEntries(new FormData(form));const response=await fetch('/api/brief',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+ try{const data=Object.fromEntries(new FormData(form));const response=await fetch('https://oko-creative-bureau.onrender.com/api/brief',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
  const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось отправить');
  delivered=true;status.textContent='Бриф доставлен в рабочий чат ОКО. Номер заявки: '+result.id;sendServer.textContent='Бриф отправлен';
  }catch(e){status.textContent=e.message;sendServer.textContent='Повторить отправку';sendServer.disabled=false;}
@@ -74,7 +74,7 @@ document.getElementById('sendMax').addEventListener('click',()=>{status.textCont
 const materials=[{"id":"MUS-BG","type":"music","title":"Музыка для фона","tag":"Фоновая музыка","desc":"Музыкальное сопровождение встреч, перерывов и спокойных эпизодов мероприятия."},{"id":"MUS-NY","type":"music","title":"Музыка для Нового года","tag":"Новый год","desc":"Запросите подборку для новогодней программы: фон, выходы и праздничные эпизоды."},{"id":"VIS-NY","type":"visual","title":"Новогодний визуал","tag":"Новый год","desc":"Визуальное оформление новогодних событий. Уточните экран, формат и разрешение."},{"id":"VIS-CAL","type":"visual","title":"Визуал календарных праздников","tag":"Календарные праздники","desc":"Материалы для традиционных праздников. Укажите нужную дату и тему в запросе."}];
 const modal=document.getElementById('materialDialog'),form=document.getElementById('materialForm'),submit=document.getElementById('sendMaterial'),status=document.getElementById('materialStatus');
 let selected=null,ready=false,busy=false,sent=false;
-fetch('/api/status').then(r=>r.json()).then(r=>{ready=r.ready;}).catch(()=>{});
+fetch('https://oko-creative-bureau.onrender.com/api/status').then(r=>r.json()).then(r=>{ready=r.ready;}).catch(()=>{});
 document.querySelectorAll('.material-filter').forEach(button=>button.addEventListener('click',()=>{
  document.querySelectorAll('.material-filter').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));});
  document.querySelectorAll('.material-card').forEach(card=>{card.hidden=button.dataset.filter!=='all'&&card.dataset.kind!==button.dataset.filter;});
@@ -91,10 +91,11 @@ form.addEventListener('submit',async event=>{
  const data=new FormData(form);
  const payload={name:data.get('name'),contact:data.get('contact'),service:'Готовые материалы · '+selected.id,task:'ЗАПРОС ДОСТУПА К МАТЕРИАЛУ\nКод: '+selected.id+'\nНазвание: '+selected.title+'\n\nПожелания клиента: '+(data.get('details')||'не указаны')+'\n\nНужно подтвердить наличие, согласовать состав, стоимость и условия использования. ZIP-подборку или ссылку на её скачивание выдаёт сотрудник только после проверки оплаты. Эта заявка не является подтверждением оплаты.',due:'',budget:''};
  busy=true;submit.disabled=true;submit.textContent='Отправляем…';status.textContent='Дождитесь подтверждения.';
- try{const response=await fetch('/api/brief',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось отправить запрос');sent=true;submit.textContent='Запрос отправлен';status.textContent='ОКО получило запрос на «'+selected.title+'». Номер: '+result.id+'. Дождитесь ответа сотрудника. Оплата ещё не подтверждена; доступ к скачиванию не открыт.';}
+ try{const response=await fetch('https://oko-creative-bureau.onrender.com/api/brief',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const result=await response.json();if(!response.ok)throw Error(result.error||'Не удалось отправить запрос');sent=true;submit.textContent='Запрос отправлен';status.textContent='ОКО получило запрос на «'+selected.title+'». Номер: '+result.id+'. Дождитесь ответа сотрудника. Оплата ещё не подтверждена; доступ к скачиванию не открыт.';}
  catch(error){submit.disabled=false;submit.textContent='Повторить отправку';status.textContent=error.message;}
  finally{busy=false;}
 });
 })();
 
 </script></body></html>
+

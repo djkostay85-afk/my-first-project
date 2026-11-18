@@ -36,12 +36,23 @@ export function formatBrief(b,id){return ['Новый бриф ОКО · '+id,'�
 
 export function webhookSecret(token){return createHmac('sha256',token).update('oko-max-webhook-v1').digest('hex');}
 export function createApp({token='',chatId='',origin='',pairCode='',onBind=id=>console.log('OKO_CHAT_BOUND '+id),fetchImpl=fetch,indexUrl=new URL('./index.html',import.meta.url)}={}){
+  const allowedOrigins=new Set([origin,'https://djkostay85-afk.github.io'].filter(Boolean));
   const rates=new Map();let sending=false;let lastSent=0;
   let bound=false;
   const json=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));};
   return async(req,res)=>{
     try{
       const path=new URL(req.url,'http://localhost').pathname;
+      if(path==='/api/status'||path==='/api/brief'){
+        const requestOrigin=req.headers.origin;
+        res.setHeader('Vary','Origin');
+        if(requestOrigin&&allowedOrigins.has(requestOrigin)){
+          res.setHeader('Access-Control-Allow-Origin',requestOrigin);
+          res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers','Content-Type');
+        }
+        if(req.method==='OPTIONS')return json(res,requestOrigin&&allowedOrigins.has(requestOrigin)?204:403,{});
+      }
       if(req.method==='POST'&&path==='/max/webhook'){
         if(!token)return json(res,503,{error:'Unavailable'});
         const received=Buffer.from(req.headers['x-max-bot-api-secret']||''),expected=Buffer.from(webhookSecret(token));
@@ -63,7 +74,7 @@ export function createApp({token='',chatId='',origin='',pairCode='',onBind=id=>c
         return res.end(await readFile(indexUrl));
       }
       if(path!=='/api/brief'||req.method!=='POST')return json(res,404,{error:'Не найдено'});
-      if(!origin||req.headers.origin!==origin)return json(res,403,{error:'Отправка доступна только с сайта ОКО'});
+      if(!allowedOrigins.has(req.headers.origin))return json(res,403,{error:'Отправка доступна только с сайта ОКО'});
       if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Некорректный формат'});
       if(!token||! /^-?\d+$/.test(chatId))return json(res,503,{error:'Приём заявок ещё не подключён. Сохраните бриф и свяжитесь с ОКО через MAX.'});
       const ip=req.socket.remoteAddress||'unknown',now=Date.now();
@@ -101,3 +112,4 @@ if(typeof process!=='undefined'&&process.argv[1]&&resolve(process.argv[1])===fil
     }
   });
 }
+
